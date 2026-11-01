@@ -1,0 +1,34 @@
+{
+  "strategy": "mean_reversion",
+  "params": {
+    "take_profit": 0.03,
+    "stop_loss": 0.005,
+    "trail_pct": 0.0075,
+    "max_hold": 240,
+    "cooldown": 30,
+    "window": 60,
+    "entry_z": 1.5,
+    "exit_z": 0.5
+  },
+  "fees": {
+    "name": "jupiter_live",
+    "trading_fee_pct": 0.0,
+    "platform_fee_pct": 0.0,
+    "slippage_pct": 0.0003,
+    "base_fee_lamports": 5000,
+    "priority_fee_lamports": 100000,
+    "jito_tip_lamports": 0,
+    "signatures": 1,
+    "one_time_sol": 0.00203928,
+    "no_quote_extra_pct": 0.0005,
+    "notes": "Ceny kupna/sprzedaży z notowań Jupitera (zawierają opłatę puli i price impact) + 0.03% zapasu na opóźnienie + opłata sieci. Gdy brak notowania: cena referencyjna ± 0.08% (opłata+poślizg)."
+  },
+  "trade_enabled": true,
+  "learned_from": {
+    "from_ts": 1793496660,
+    "to_ts": 1793521860,
+    "bars": 420,
+    "train_return_pct": 0.10798417884942957,
+    "test_return_pct": 0.0406535259725338
+  }
+}
