@@ -23,6 +23,24 @@ Stan konta jest zapisywany w `data/` – po restarcie bot kontynuuje.
 
 Testy: `python -m unittest -v`
 
+## Tryb własnej obserwacji (bot uczy się tylko z tego, co sam zobaczył)
+
+```bash
+python -m solbot observe          # obserwacja + nauka + handel demo, panel: http://127.0.0.1:8050
+python -m solbot learn --own      # ręczna nauka na własnych obserwacjach
+python -m solbot backtest --own   # backtest nauczonej strategii na własnych obserwacjach
+```
+
+Co 10 sekund bot sam obserwuje rynek i zapisuje to w `data/live/ticks.csv` (świece 1-min w `data/live/live_bars.csv`):
+* cenę SOL (Jupiter) i zmianę 24 h,
+* **realną cenę kupna i sprzedaży SOL** – notowania swapu Jupitera dla pozycji ~1000 USD (zawierają opłatę puli i wpływ na cenę),
+* wskaźniki rynkowe: BTC, ETH, JUP, BONK (strategia `market_lead` sprawdza, czy ruch BTC/ETH wyprzedza SOL).
+
+Nie korzysta z żadnej historii z zewnątrz. Dopóki nie zbierze 6 h obserwacji i nie znajdzie strategii zyskownej po opłatach
+na danych treningowych **i** testowych – tylko obserwuje. Uczy się od nowa co 6 h na wszystkich swoich obserwacjach.
+Transakcje demo wykonuje po obserwowanych cenach kupna/sprzedaży + 0,03% zapasu na opóźnienie + opłata sieci Solana
+(profil opłat `jupiter_live`).
+
 ## Jak bot „uczy się” handlować
 
 1. **Obserwacja** – bot co kilka sekund pobiera cenę (Jupiter Price API, awaryjnie CoinGecko), zapisuje ją do

@@ -30,7 +30,8 @@ from .strategies import STRATEGIES
 
 
 def _bars(args):
-    if getattr(args, "own", False):
+    if getattr(args, "own", False) or (not (Path(args.data) / "sol_1m_7d.csv").exists()
+                                       and (Path(args.data) / "live_bars.csv").exists()):
         path = Path(args.data) / "live_bars.csv"
         bars = load_bars(path)
         print(f"Własne obserwacje: {len(bars)} świec 1m ({len(bars)/60:.1f} h), "
@@ -96,6 +97,8 @@ def cmd_learn(args):
 
 
 def cmd_backtest(args):
+    if args.own and args.data == "data":
+        args.data = "data/live"
     bars = _bars(args)
     if args.strategy:
         cfg = dict(strategy=args.strategy, params=json.loads(args.params or "{}"), fees=args.fees)
@@ -178,6 +181,7 @@ def main(argv=None):
         p.add_argument("--fees", default="jupiter", help=f"profil opłat: {', '.join(FEE_PROFILES)}")
         p.add_argument("--fill", default="close", choices=["close", "intrabar"],
                        help="close = konserwatywnie (domyślnie), intrabar = optymistycznie")
+        p.add_argument("--own", action="store_true", help="tylko własne obserwacje bota (katalog data/live)")
 
     p = sub.add_parser("fees", help="pokaż modele opłat")
     p.add_argument("--notional", type=float, default=1000)
@@ -191,7 +195,6 @@ def main(argv=None):
     p = sub.add_parser("learn", help="optymalizuj strategię na historii")
     data_opts(p)
     p.add_argument("--samples", type=int, default=200)
-    p.add_argument("--own", action="store_true", help="ucz się tylko na własnych obserwacjach (--data data/live)")
     p.add_argument("--strategies", help=f"lista po przecinku: {','.join(STRATEGIES)}")
     p.set_defaults(fn=cmd_learn)
 
