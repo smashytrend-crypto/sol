@@ -7,12 +7,17 @@
   python -m solbot run                     # bot demo na żywo + panel WWW (http://127.0.0.1:8050)
   python -m solbot paper                   # sam bot demo (bez panelu)
   python -m solbot dashboard               # sam panel
+  python -m solbot observe                 # TRYB WŁASNEJ OBSERWACJI: bot sam obserwuje rynek (SOL, notowania
+                                           # kupna/sprzedaży, BTC, ETH, JUP, BONK), uczy się tylko z tego co zobaczył
+                                           # i handluje na niby dopiero gdy znajdzie strategię zyskowną po opłatach
+  python -m solbot learn --own             # nauka wyłącznie na własnych obserwacjach (data/live)
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +30,13 @@ from .strategies import STRATEGIES
 
 
 def _bars(args):
+    if getattr(args, "own", False):
+        path = Path(args.data) / "live_bars.csv"
+        bars = load_bars(path)
+        print(f"Własne obserwacje: {len(bars)} świec 1m ({len(bars)/60:.1f} h), "
+              f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(bars[0].ts))} → "
+              f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(bars[-1].ts))} UTC")
+        return bars
     path = Path(args.data) / "sol_1m_7d.csv"
     if args.refresh or not path.exists():
         print(f"Pobieram {args.days} dni świec 1m…")
@@ -52,6 +64,11 @@ def cmd_fetch(args):
 
 
 def cmd_learn(args):
+    if args.own:
+        if args.data == "data":
+            args.data = "data/live"
+        if args.fees == "jupiter":
+            args.fees = "jupiter_live"
     bars = _bars(args)
     fees = get_fee_model(args.fees)
     print(f"Model opłat '{fees.name}': koszt pełnego cyklu ≈ {fees.round_trip_pct()*100:.3f}%")
@@ -99,9 +116,29 @@ def cmd_backtest(args):
             print(f"  {name:12s} {rr.return_pct:+7.2f}%  opłaty ${rr.fees_usd:7.2f}")
 
 
-def _bot(args) -> PaperBot:
+def _bot(args, own=False) -> PaperBot:
     return PaperBot(args.data, start_cash=args.cash, interval=args.interval, relearn_hours=args.relearn_hours,
-                    reset=args.reset)
+                    reset=args.reset, own_data=own, learn_samples=getattr(args, "samples", 120),
+                    min_learn_bars=getattr(args, "min_learn_bars", 360))
+
+
+def cmd_observe(args):
+    from .dashboard import serve
+    if args.data == "data":
+        args.data = "data/live"
+    bot = _bot(args, own=True)
+    if not args.no_dashboard:
+        try:
+            serve(args.data, args.host, args.port, bot=bot, block=False)
+        except OSError as e:
+            print(f"Panel niedostępny ({e}) – bot działa dalej")
+    if args.duration:
+        threading.Timer(args.duration, bot.stop_event.set).start()
+    try:
+        bot.run()
+    except KeyboardInterrupt:
+        bot.save()
+        print("\nZatrzymano, stan zapisany.")
 
 
 def cmd_paper(args):
@@ -154,6 +191,7 @@ def main(argv=None):
     p = sub.add_parser("learn", help="optymalizuj strategię na historii")
     data_opts(p)
     p.add_argument("--samples", type=int, default=200)
+    p.add_argument("--own", action="store_true", help="ucz się tylko na własnych obserwacjach (--data data/live)")
     p.add_argument("--strategies", help=f"lista po przecinku: {','.join(STRATEGIES)}")
     p.set_defaults(fn=cmd_learn)
 
@@ -174,6 +212,19 @@ def main(argv=None):
         p.add_argument("--host", default="127.0.0.1")
         p.add_argument("--port", type=int, default=8050)
         p.set_defaults(fn=fn)
+
+    p = sub.add_parser("observe", help="bot sam obserwuje rynek i uczy się wyłącznie z własnych obserwacji")
+    p.add_argument("--cash", type=float, default=1000.0, help="kapitał startowy (fikcyjne USD)")
+    p.add_argument("--interval", type=float, default=10.0, help="co ile sekund obserwować rynek")
+    p.add_argument("--relearn-hours", type=float, default=6.0, help="co ile godzin uczyć się od nowa")
+    p.add_argument("--min-learn-bars", type=int, default=360, help="min. liczba własnych świec 1m do nauki")
+    p.add_argument("--samples", type=int, default=150, help="prób parametrów na strategię przy nauce")
+    p.add_argument("--duration", type=float, default=0, help="zakończ po tylu sekundach (0 = bez końca)")
+    p.add_argument("--reset", action="store_true")
+    p.add_argument("--no-dashboard", action="store_true")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8050)
+    p.set_defaults(fn=cmd_observe)
 
     p = sub.add_parser("dashboard", help="sam panel WWW")
     p.add_argument("--host", default="127.0.0.1")

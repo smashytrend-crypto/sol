@@ -215,7 +215,42 @@ class EMACross(Strategy):
         return self.diff is not None and self.diff < 0
 
 
-STRATEGIES: dict[str, type[Strategy]] = {c.name: c for c in (DipBuy, MeanReversion, RSIStrategy, Breakout, EMACross)}
+class MarketLead(Strategy):
+    """Wskaźnik rynkowy: BTC/ETH często ruszają pierwsze. Kupno SOL, gdy wybrany rynek (BTC/ETH)
+    wzrósł o `lead_pct` w `lookback` świec, a SOL jeszcze nie nadrobił (wzrost < `lag_pct`).
+    Opcjonalny filtr trendu: SOL powyżej własnej EMA(`trend`)."""
+    name = "market_lead"
+    DEFAULTS = dict(asset="BTC", lookback=15, lead_pct=0.003, lag_pct=0.001, trend=0)
+    SPACE = dict(asset=["BTC", "ETH"], lookback=[5, 10, 15, 30, 60], lead_pct=[0.001, 0.002, 0.003, 0.005, 0.008],
+                 lag_pct=[-0.002, 0.0, 0.001, 0.002], trend=[0, 0, 60, 240])
+    WARMUP_KEYS = ("lookback", "trend")
+
+    def setup(self):
+        n = int(self.p["lookback"]) + 1
+        self.lead, self.sol = Window(n), Window(n)
+        self.ema = EMA(int(self.p["trend"])) if self.p["trend"] else None
+        self.ema_v = None
+
+    def update(self, bar):
+        v = bar.ctx.get(self.p["asset"])
+        if v:
+            self.lead.push(v)
+            self.sol.push(bar.close)
+        if self.ema:
+            self.ema_v = self.ema.push(bar.close)
+
+    def entry_signal(self, bar):
+        if not self.lead.ready:
+            return False
+        lead_ret = self.lead.q[-1] / self.lead.first() - 1
+        sol_ret = self.sol.q[-1] / self.sol.first() - 1
+        if self.ema and (self.ema_v is None or bar.close < self.ema_v):
+            return False
+        return lead_ret >= self.p["lead_pct"] and sol_ret <= self.p["lag_pct"]
+
+
+STRATEGIES: dict[str, type[Strategy]] = {c.name: c for c in (DipBuy, MeanReversion, RSIStrategy, Breakout, EMACross,
+                                                             MarketLead)}
 
 
 def make_strategy(name: str, params: dict | None = None) -> Strategy:

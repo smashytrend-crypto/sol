@@ -9,7 +9,7 @@ import csv
 import json
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -30,6 +30,7 @@ class Bar:
     low: float
     close: float
     volume: float = 0.0
+    ctx: dict = field(default_factory=dict)  # dodatkowe obserwacje: ask/bid SOL, BTC, ETH, JUP, BONK…
 
 
 def _get_json(url: str, timeout: float = 15.0):
@@ -91,21 +92,35 @@ def fill_gaps(bars: list[Bar], step: int) -> list[Bar]:
     return out
 
 
+CTX_KEYS = ["ask", "bid", "BTC", "ETH", "JUP", "BONK", "sol_chg24h"]
+
+
+def bar_row(b: Bar, ctx_keys=CTX_KEYS) -> list:
+    return [b.ts, f"{b.open:.6f}", f"{b.high:.6f}", f"{b.low:.6f}", f"{b.close:.6f}", f"{b.volume:.2f}"] + \
+        [("" if b.ctx.get(k) is None else f"{b.ctx[k]:.10g}") for k in ctx_keys]
+
+
+BAR_HEADER = ["ts", "open", "high", "low", "close", "volume"] + [f"ctx_{k}" for k in CTX_KEYS]
+
+
 def save_bars(bars: list[Bar], path: str | Path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["ts", "open", "high", "low", "close", "volume"])
+        w.writerow(BAR_HEADER)
         for b in bars:
-            w.writerow([b.ts, f"{b.open:.6f}", f"{b.high:.6f}", f"{b.low:.6f}", f"{b.close:.6f}", f"{b.volume:.2f}"])
+            w.writerow(bar_row(b))
 
 
 def load_bars(path: str | Path) -> list[Bar]:
+    out = []
     with open(path, newline="") as f:
-        r = csv.DictReader(f)
-        return [Bar(int(x["ts"]), float(x["open"]), float(x["high"]), float(x["low"]), float(x["close"]),
-                    float(x.get("volume") or 0)) for x in r]
+        for x in csv.DictReader(f):
+            ctx = {k[4:]: float(v) for k, v in x.items() if k and k.startswith("ctx_") and v not in ("", None)}
+            out.append(Bar(int(x["ts"]), float(x["open"]), float(x["high"]), float(x["low"]), float(x["close"]),
+                           float(x.get("volume") or 0), ctx))
+    return out
 
 
 def merge_bars(*series: list[Bar]) -> list[Bar]:
@@ -127,6 +142,47 @@ def fetch_price() -> tuple[float, str]:
         return float(d["solana"]["usd"]), "coingecko"
 
 
+# ---- obserwacja rynku (wszystko na żywo, bez historii z zewnątrz) -------------
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+CONTEXT_MINTS = {
+    "BTC": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",   # cbBTC
+    "ETH": "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",   # WETH (Wormhole)
+    "JUP": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "BONK": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+}
+JUP_QUOTE = "https://lite-api.jup.ag/swap/v1/quote?inputMint={i}&outputMint={o}&amount={a}&slippageBps=50"
+
+
+def fetch_market(quote_usd: float = 1000.0) -> dict:
+    """Jedna obserwacja rynku:
+      price – cena SOL (Jupiter), ask/bid – REALNA cena kupna/sprzedaży SOL wg notowania swapu Jupitera
+      dla pozycji ~quote_usd (zawiera opłatę puli i wpływ na cenę), BTC/ETH/JUP/BONK – kontekst rynku."""
+    ids = ",".join([SOL_MINT] + list(CONTEXT_MINTS.values()))
+    out: dict = {"source": "jupiter"}
+    try:
+        d = _get_json(f"https://lite-api.jup.ag/price/v3?ids={ids}", timeout=8)
+        out["price"] = float(d[SOL_MINT]["usdPrice"])
+        out["sol_chg24h"] = float(d[SOL_MINT].get("priceChange24h") or 0)
+        for k, m in CONTEXT_MINTS.items():
+            if m in d:
+                out[k] = float(d[m]["usdPrice"])
+    except Exception:
+        out["price"], out["source"] = fetch_price()
+    price = out["price"]
+    try:
+        q = _get_json(JUP_QUOTE.format(i=USDC_MINT, o=SOL_MINT, a=int(quote_usd * 1e6)), timeout=8)
+        out["ask"] = (int(q["inAmount"]) / 1e6) / (int(q["outAmount"]) / 1e9)
+        sol_amt = quote_usd / price
+        q = _get_json(JUP_QUOTE.format(i=SOL_MINT, o=USDC_MINT, a=int(sol_amt * 1e9)), timeout=8)
+        out["bid"] = (int(q["outAmount"]) / 1e6) / (int(q["inAmount"]) / 1e9)
+        # odrzucamy notowania wyraźnie błędne
+        if not (price * 0.97 < out["bid"] <= out["ask"] < price * 1.03):
+            out.pop("ask"), out.pop("bid")
+    except Exception:
+        pass
+    return out
+
+
 class BarAggregator:
     """Składa ticki (cena co kilka sekund) w świece o zadanej długości."""
 
@@ -134,8 +190,8 @@ class BarAggregator:
         self.step = step
         self.cur: Bar | None = None
 
-    def update(self, ts: float, price: float) -> Bar | None:
-        """Zwraca zamkniętą świecę, jeśli tick otworzył nową."""
+    def update(self, ts: float, price: float, ctx: dict | None = None) -> Bar | None:
+        """Zwraca zamkniętą świecę, jeśli tick otworzył nową. ctx = ostatnie wartości dodatkowych obserwacji."""
         start = int(ts // self.step * self.step)
         closed = None
         if self.cur is None:
@@ -146,4 +202,7 @@ class BarAggregator:
         else:
             c = self.cur
             c.high, c.low, c.close = max(c.high, price), min(c.low, price), price
+        if ctx:
+            self.cur.ctx.update({k: v for k, v in ctx.items() if isinstance(v, (int, float))})
+        self.cur.volume += 1  # liczba obserwacji w świecy
         return closed

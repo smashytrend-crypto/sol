@@ -50,7 +50,10 @@ class PaperBroker:
     def in_position(self) -> bool:
         return self.sol > 1e-12
 
-    def buy(self, price: float, usd_amount: float, ts: int, reason: str = "") -> Trade | None:
+    def buy(self, price: float, usd_amount: float, ts: int, reason: str = "",
+            quote: float | None = None) -> Trade | None:
+        """price = cena referencyjna; quote = realna cena kupna z notowania (jeśli znana) –
+        wtedy poślizg modelu dolicza się już tylko jako zapas na opóźnienie."""
         f = self.fees
         usd_amount = min(usd_amount, self.cash)
         net_fee_usd = f.network_fee_usd(price)
@@ -60,7 +63,7 @@ class PaperBroker:
         if spend <= 0 or spend * f.pct_fee >= spend:
             return None
         pct_fee = spend * f.pct_fee
-        exec_price = price * (1 + f.slippage_pct)
+        exec_price = (max(quote, price) if quote else price * (1 + f.no_quote_extra_pct)) * (1 + f.slippage_pct)
         sol_out = (spend - pct_fee) / exec_price
         slip_usd = sol_out * (exec_price - price)
         self._one_time_paid = True
@@ -72,12 +75,13 @@ class PaperBroker:
         self._record(t)
         return t
 
-    def sell(self, price: float, sol_amount: float | None, ts: int, reason: str = "") -> Trade | None:
+    def sell(self, price: float, sol_amount: float | None, ts: int, reason: str = "",
+             quote: float | None = None) -> Trade | None:
         f = self.fees
         sol_amount = self.sol if sol_amount is None else min(sol_amount, self.sol)
         if sol_amount <= 0:
             return None
-        exec_price = price * (1 - f.slippage_pct)
+        exec_price = (min(quote, price) if quote else price * (1 - f.no_quote_extra_pct)) * (1 - f.slippage_pct)
         gross = sol_amount * exec_price
         pct_fee = gross * f.pct_fee
         net_fee_usd = f.network_fee_usd(price)

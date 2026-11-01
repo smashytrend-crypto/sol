@@ -64,21 +64,24 @@ def run_backtest(bars: list[Bar], strategy: Strategy | str, fees: FeeModel, para
     bars_in_pos = 0
     curve = []
 
-    def do_sell(price, ts, reason):
-        broker.sell(price, None, ts, reason)
+    def do_sell(price, ts, reason, quote=None):
+        broker.sell(price, None, ts, reason, quote=quote)
         strat.on_exit()
 
     for i, bar in enumerate(bars):
         px = bar.close if fill == "close" else bar.open
+        # realne notowania kupna/sprzedaży (jeśli bot je obserwował) – tylko przy wykonaniu na zamknięciu
+        ask = bar.ctx.get("ask") if fill == "close" else None
+        bid = bar.ctx.get("bid") if fill == "close" else None
         # 1) wykonanie sygnału z poprzedniej świecy
         entered_now = False
         if pending == "BUY" and not broker.in_position:
-            t = broker.buy(px, broker.equity(px) * strat.p["position_pct"], bar.ts, "signal")
+            t = broker.buy(px, broker.equity(px) * strat.p["position_pct"], bar.ts, "signal", quote=ask)
             if t:
                 strat.on_entry(px)
                 entered_now = True
         elif pending == "SELL" and broker.in_position:
-            do_sell(px, bar.ts, "signal")
+            do_sell(px, bar.ts, "signal", bid)
         pending = None
 
         # 2) TP / SL
@@ -88,9 +91,9 @@ def run_backtest(bars: list[Bar], strategy: Strategy | str, fees: FeeModel, para
             if fill == "close":
                 if not entered_now:
                     if sl is not None and bar.close <= sl:
-                        do_sell(bar.close, bar.ts, "stop_loss")
+                        do_sell(bar.close, bar.ts, "stop_loss", bid)
                     elif tp is not None and bar.close >= tp:
-                        do_sell(bar.close, bar.ts, "take_profit")
+                        do_sell(bar.close, bar.ts, "take_profit", bid)
             elif sl is not None and bar.open <= sl:
                 do_sell(bar.open, bar.ts, "stop_loss(gap)")
             elif sl is not None and bar.low <= sl:
@@ -112,7 +115,7 @@ def run_backtest(bars: list[Bar], strategy: Strategy | str, fees: FeeModel, para
             curve.append((bar.ts, round(eq, 4), bar.close))
 
     if broker.in_position and bars:
-        do_sell(bars[-1].close, bars[-1].ts, "end_of_test")
+        do_sell(bars[-1].close, bars[-1].ts, "end_of_test", bars[-1].ctx.get("bid") if fill == "close" else None)
     end_eq = broker.cash
 
     sells = [t for t in broker.trades if t.side == "SELL"]

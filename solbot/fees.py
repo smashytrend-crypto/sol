@@ -30,6 +30,8 @@ class FeeModel:
     signatures: int = 1
     # Jednorazowe koszty (np. rent za konto tokena USDC) – liczone przy pierwszym zakupie
     one_time_sol: float = 0.0
+    # dodatkowy koszt, gdy transakcja nie ma realnego notowania (quote) – np. opłata puli + spread
+    no_quote_extra_pct: float = 0.0
     notes: str = ""
 
     # ---- wyliczenia ---------------------------------------------------------
@@ -47,7 +49,7 @@ class FeeModel:
 
     def round_trip_pct(self, notional_usd: float = 1000.0, sol_price: float = 100.0) -> float:
         """Przybliżony koszt pełnego cyklu kup+sprzedaj jako ułamek wartości pozycji."""
-        pct = 2 * (self.pct_fee + self.slippage_pct)
+        pct = 2 * (self.pct_fee + self.slippage_pct + self.no_quote_extra_pct)
         fixed = 2 * self.network_fee_usd(sol_price) / max(notional_usd, 1e-9)
         return pct + fixed
 
@@ -69,6 +71,15 @@ FEE_PROFILES: dict[str, FeeModel] = {
         one_time_sol=0.00203928,
         notes="DEX on-chain: opłata puli ~0.05%, poślizg ~0.05%, opłata sieci 5000 lamportów + priority fee. "
               "one_time_sol = rent za konto tokena USDC (zwrotny po zamknięciu konta).",
+    ),
+    # Swap przez Jupiter, ale cena wykonania brana z REALNEGO notowania (quote) obserwowanego na żywo:
+    # notowanie zawiera już opłatę puli i wpływ na cenę, więc dokładamy tylko zapas na opóźnienie + sieć.
+    "jupiter_live": FeeModel(
+        name="jupiter_live", trading_fee_pct=0.0, platform_fee_pct=0.0, slippage_pct=0.0003, no_quote_extra_pct=0.0005,
+        base_fee_lamports=5_000, priority_fee_lamports=100_000, jito_tip_lamports=0,
+        one_time_sol=0.00203928,
+        notes="Ceny kupna/sprzedaży z notowań Jupitera (zawierają opłatę puli i price impact) + 0.03% zapasu "
+              "na opóźnienie + opłata sieci. Gdy brak notowania: cena referencyjna ± 0.08% (opłata+poślizg).",
     ),
     # Ten sam swap, ale przez aplikację/portfel pobierający opłatę serwisową (np. Phantom ~0.85%)
     "wallet_swap": FeeModel(

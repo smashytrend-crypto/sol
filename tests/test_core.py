@@ -131,3 +131,39 @@ class BacktestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnDataTests(unittest.TestCase):
+    def test_market_lead_and_quotes(self):
+        from solbot.optimize import optimize
+        bars = []
+        sol, btc = 100.0, 50000.0
+        for i in range(1200):
+            phase = i % 60
+            if phase == 10:
+                btc *= 1.006
+            if phase == 25:
+                sol *= 1.012  # SOL nadrabia ruch BTC z opóźnieniem
+            if phase == 55:
+                sol *= 0.995
+                btc *= 0.998
+            bars.append(Bar(1_700_000_000 + 60 * i, sol, sol, sol, sol, 1,
+                            {"ask": sol * 1.0001, "bid": sol * 0.9999, "BTC": btc}))
+        p = dict(asset="BTC", lookback=5, lead_pct=0.004, lag_pct=0.001, trend=0, take_profit=0.01,
+                 stop_loss=0.02, max_hold=30, cooldown=0)
+        r = run_backtest(bars, "market_lead", get_fee_model("jupiter_live"), p, keep_log=True)
+        self.assertGreater(r.trades, 10)
+        self.assertGreater(r.return_pct, 0)
+        buy = next(t for t in r.trade_log if t["side"] == "BUY")
+        self.assertGreater(buy["exec_price"], buy["ref_price"])  # kupno po cenie z notowania (ask) + zapas
+        rep = optimize(bars, get_fee_model("jupiter_live"), ["market_lead"], samples=40, verbose=False)
+        self.assertTrue(rep["profitable"])
+
+    def test_bar_ctx_roundtrip(self):
+        import tempfile, os
+        from solbot.data import load_bars, save_bars
+        b = [Bar(60, 1, 2, 0.5, 1.5, 3, {"ask": 1.6, "BTC": 70000.0})]
+        with tempfile.TemporaryDirectory() as d:
+            save_bars(b, os.path.join(d, "x.csv"))
+            r = load_bars(os.path.join(d, "x.csv"))
+        self.assertEqual(r[0].ctx, {"ask": 1.6, "BTC": 70000.0})

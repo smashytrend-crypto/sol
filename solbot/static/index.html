@@ -38,6 +38,8 @@ code{font-size:12px;word-break:break-all}.mute{color:var(--mute)}
 <main>
   <section class="card c12"><div class="kpis" id="kpis"></div></section>
 
+  <section class="card c12" id="marketCard" style="display:none"><h2>Obserwacja rynku na żywo</h2><div class="kpis" id="market"></div></section>
+
   <section class="card c8"><h2>Cena SOL i transakcje bota</h2><div class="legend" id="priceLegend"></div><div class="chart"><canvas id="price"></canvas></div></section>
   <section class="card c4"><h2>Opłaty zapłacone</h2><div id="fees"></div></section>
 
@@ -88,13 +90,21 @@ function render(s){
   if(!s){$('status').textContent='brak danych – uruchom: python -m solbot run';return}
   const pnl=s.equity-s.start_cash;
   $('status').className='badge '+(s.trade_enabled?'on':'off');
-  $('status').textContent=s.trade_enabled?'handel demo aktywny':'tylko obserwacja';
+  $('status').textContent=s.trade_enabled?'handel demo aktywny':'obserwuję i uczę się (bez handlu)';
   $('upd').textContent='aktualizacja '+tfmt(s.updated)+(s.price_source?' · cena z '+s.price_source:'');
   const k=[['Cena SOL',usd(s.price,3)],['Wartość konta',usd(s.equity)],['Wynik',`<span class="${cls(pnl)}">${usd(pnl)} (${pct(pnl/s.start_cash*100)})</span>`],
     ['Gotówka (USDC)',usd(s.cash)],['SOL',s.sol.toFixed(4)],['Cykle / trafione',`${s.round_trips} / ${s.wins}`],
     ['Opłaty łącznie',usd(s.fees_paid_usd,3)],['Pozycja',s.in_position?`od ${usd(s.entry_price,3)}`:'brak']];
   $('kpis').innerHTML=k.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
 
+  if(s.market){
+    const m=s.market,sp=m.ask&&m.bid?(m.ask/m.bid-1)*100:null,h=(s.observed_bars||0)/60;
+    $('marketCard').style.display='';
+    $('market').innerHTML=[['Kupno SOL (notowanie)',usd(m.ask,3)],['Sprzedaż SOL (notowanie)',usd(m.bid,3)],['Spread kupno/sprzedaż',sp==null?'–':sp.toFixed(3)+'%'],
+      ['SOL 24h',pct(m.sol_chg24h)],['BTC',usd(m.BTC,0)],['ETH',usd(m.ETH,0)],['JUP',usd(m.JUP,4)],
+      ['Zaobserwowano',`${h.toFixed(1)} h (${(h/168*100).toFixed(0)}% tygodnia)`]]
+      .map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v" style="font-size:18px">${v}</div></div>`).join('');
+  }
   const fb=s.fees_breakdown,fm=s.fee_model;
   $('fees').innerHTML=`<table>
     <tr><td class="l">Prowizja % (pula / giełda / platforma)</td><td>${usd(fb.pct,3)}</td></tr>
