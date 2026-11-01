@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.tmp
+data/paper_state.json
+data/paper_snapshot.json
+data/ticks.csv
+data/live_bars.csv
+data/backtest_report.json

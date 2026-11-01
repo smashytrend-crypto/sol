@@ -1,0 +1,32 @@
+{
+  "strategy": "breakout",
+  "params": {
+    "take_profit": 0.015,
+    "stop_loss": 0.005,
+    "trail_pct": 0.01,
+    "max_hold": 0,
+    "cooldown": 0,
+    "lookback": 120,
+    "threshold": 0.001
+  },
+  "fees": {
+    "name": "jupiter",
+    "trading_fee_pct": 0.0005,
+    "platform_fee_pct": 0.0,
+    "slippage_pct": 0.0005,
+    "base_fee_lamports": 5000,
+    "priority_fee_lamports": 100000,
+    "jito_tip_lamports": 0,
+    "signatures": 1,
+    "one_time_sol": 0.00203928,
+    "notes": "DEX on-chain: opłata puli ~0.05%, poślizg ~0.05%, opłata sieci 5000 lamportów + priority fee. one_time_sol = rent za konto tokena USDC (zwrotny po zamknięciu konta)."
+  },
+  "trade_enabled": true,
+  "learned_from": {
+    "from_ts": 1792891140,
+    "to_ts": 1793495700,
+    "bars": 10077,
+    "train_return_pct": 1.7593920106051764,
+    "test_return_pct": 0.9868808839976762
+  }
+}

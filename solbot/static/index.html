@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolBot – demo</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--mute:#68707c;--line:#e3e6ea;--up:#13915f;--down:#d13b3b;--acc:#7a4cf0;--acc2:#1fa3c9}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--fg:#e7e9ee;--mute:#949cab;--line:#2a2f38;--up:#2fc685;--down:#ff6b6b;--acc:#a58bff;--acc2:#4cc7ea}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:16px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between}
+h1{font-size:20px;margin:0}h2{font-size:14px;margin:0 0 10px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--line)}
+.badge.on{background:color-mix(in srgb,var(--up) 20%,transparent);color:var(--up)}.badge.off{background:color-mix(in srgb,var(--down) 20%,transparent);color:var(--down)}
+main{padding:0 20px 30px;display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
+.c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
+@media (max-width:900px){.c8,.c6,.c4{grid-column:span 12}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.kpi .v{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}.kpi .l{color:var(--mute);font-size:12px}
+.up{color:var(--up)}.down{color:var(--down)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px}
+th,td{text-align:right;padding:5px 6px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mute);font-weight:500}
+th:first-child,td:first-child,td.l,th.l{text-align:left}
+.scroll{max-height:340px;overflow:auto}
+.chart{position:relative;height:280px}.chart canvas{width:100%;height:100%;display:block}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:4px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.log div{padding:3px 0;border-bottom:1px dashed var(--line);font-size:13px}.log .t{color:var(--mute);margin-right:6px}
+.log .trade{color:var(--acc)}.log .warn{color:var(--down)}.log .learn{color:var(--acc2)}
+code{font-size:12px;word-break:break-all}.mute{color:var(--mute)}
+</style>
+</head>
+<body>
+<header>
+  <h1>SolBot <span class="mute" style="font-weight:400">· handel demo SOL/USDC za fikcyjne pieniądze</span></h1>
+  <div><span id="status" class="badge">łączenie…</span> <span id="upd" class="mute"></span></div>
+</header>
+<main>
+  <section class="card c12"><div class="kpis" id="kpis"></div></section>
+
+  <section class="card c8"><h2>Cena SOL i transakcje bota</h2><div class="legend" id="priceLegend"></div><div class="chart"><canvas id="price"></canvas></div></section>
+  <section class="card c4"><h2>Opłaty zapłacone</h2><div id="fees"></div></section>
+
+  <section class="card c8"><h2>Wartość konta demo</h2><div class="legend" id="equityLegend"></div><div class="chart"><canvas id="equity"></canvas></div></section>
+  <section class="card c4"><h2>Strategia</h2><div id="strategy"></div></section>
+
+  <section class="card c6"><h2>Transakcje</h2><div class="scroll"><table id="trades"></table></div></section>
+  <section class="card c6"><h2>Dziennik bota</h2><div class="scroll log" id="log"></div></section>
+
+  <section class="card c12"><h2>Backtest ostatniego tygodnia (dane historyczne, po opłatach)</h2><div id="btInfo" class="mute"></div>
+    <div class="legend" id="btLegend"></div><div class="chart"><canvas id="btPrice"></canvas></div>
+    <div class="legend" id="btEqLegend" style="margin-top:10px"></div><div class="chart" style="height:180px"><canvas id="btEquity"></canvas></div></section>
+  <section class="card c12"><h2>Nauka – ranking strategii (7 dni, po opłatach)</h2><div id="learn" class="scroll"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const usd=(v,d=2)=>v==null?'–':(v<0?'-':'')+'$'+Math.abs(v).toLocaleString('pl-PL',{minimumFractionDigits:d,maximumFractionDigits:d});
+const pct=v=>v==null?'–':(v>0?'+':'')+v.toFixed(2)+'%';
+const cls=v=>v>0?'up':v<0?'down':'';
+const tfmt=ts=>new Date(ts*1000).toLocaleString('pl-PL',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+// Minimalny wykres liniowy na canvasie (bez zewnętrznych bibliotek – działa offline)
+function drawChart(canvas,series){
+  const dpr=window.devicePixelRatio||1,W=canvas.clientWidth,H=canvas.clientHeight;
+  canvas.width=W*dpr;canvas.height=H*dpr;const g=canvas.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);
+  const pts=series.flatMap(s=>s.data);
+  if(pts.length<1){g.fillStyle=css('--mute');g.font='13px system-ui';g.fillText('czekam na dane…',12,24);return}
+  let x0=Math.min(...pts.map(p=>p.x)),x1=Math.max(...pts.map(p=>p.x)),y0=Math.min(...pts.map(p=>p.y)),y1=Math.max(...pts.map(p=>p.y));
+  if(x1===x0)x1=x0+60;const pad=(y1-y0)*0.08||Math.abs(y0)*0.001||1;y0-=pad;y1+=pad;
+  const L=62,R=10,T=8,B=24,X=x=>L+(x-x0)/(x1-x0)*(W-L-R),Y=y=>T+(1-(y-y0)/(y1-y0))*(H-T-B);
+  g.font='11px system-ui';g.strokeStyle=css('--line');g.fillStyle=css('--mute');g.lineWidth=1;
+  const dec=Math.min(4,Math.max(0,Math.ceil(-Math.log10((y1-y0)/4))+1));
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4,yy=Y(v);g.beginPath();g.moveTo(L,yy);g.lineTo(W-R,yy);g.stroke();g.fillText(v.toFixed(dec),4,yy+4)}
+  for(let i=0;i<=4;i++){const v=x0+(x1-x0)*i/4,t=tfmt(v);g.fillText(t,Math.min(Math.max(X(v)-g.measureText(t).width/2,L),W-R-g.measureText(t).width),H-6)}
+  for(const s of series){
+    g.strokeStyle=g.fillStyle=s.color;g.lineWidth=s.width||1.5;g.setLineDash(s.dash||[]);
+    if(s.marker){for(const p of s.data){const x=X(p.x),y=Y(p.y),d=s.marker==='up'?1:-1;g.beginPath();g.moveTo(x,y-7*d);g.lineTo(x-6,y+5*d);g.lineTo(x+6,y+5*d);g.closePath();g.fill()}}
+    else{g.beginPath();s.data.forEach((p,i)=>i?g.lineTo(X(p.x),Y(p.y)):g.moveTo(X(p.x),Y(p.y)));g.stroke()}
+  }
+  g.setLineDash([]);
+}
+function legend(el,series){el.innerHTML=series.map(s=>`<span><i style="background:${s.color}"></i>${s.label}</span>`).join('')}
+let lastState=null;
+window.addEventListener('resize',()=>lastState&&render(lastState));
+
+function render(s){
+  lastState=s;
+  if(!s){$('status').textContent='brak danych – uruchom: python -m solbot run';return}
+  const pnl=s.equity-s.start_cash;
+  $('status').className='badge '+(s.trade_enabled?'on':'off');
+  $('status').textContent=s.trade_enabled?'handel demo aktywny':'tylko obserwacja';
+  $('upd').textContent='aktualizacja '+tfmt(s.updated)+(s.price_source?' · cena z '+s.price_source:'');
+  const k=[['Cena SOL',usd(s.price,3)],['Wartość konta',usd(s.equity)],['Wynik',`<span class="${cls(pnl)}">${usd(pnl)} (${pct(pnl/s.start_cash*100)})</span>`],
+    ['Gotówka (USDC)',usd(s.cash)],['SOL',s.sol.toFixed(4)],['Cykle / trafione',`${s.round_trips} / ${s.wins}`],
+    ['Opłaty łącznie',usd(s.fees_paid_usd,3)],['Pozycja',s.in_position?`od ${usd(s.entry_price,3)}`:'brak']];
+  $('kpis').innerHTML=k.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+
+  const fb=s.fees_breakdown,fm=s.fee_model;
+  $('fees').innerHTML=`<table>
+    <tr><td class="l">Prowizja % (pula / giełda / platforma)</td><td>${usd(fb.pct,3)}</td></tr>
+    <tr><td class="l">Poślizg cenowy</td><td>${usd(fb.slippage,3)}</td></tr>
+    <tr><td class="l">Opłaty sieci Solana</td><td>${usd(fb.network,3)}</td></tr>
+    <tr><th class="l">Razem</th><th>${usd(s.fees_paid_usd,3)}</th></tr></table>
+    <p class="mute">Model <b>${fm.name}</b>: prowizja ${(fm.trading_fee_pct*100+fm.platform_fee_pct*100).toFixed(3)}%,
+    poślizg ${(fm.slippage_pct*100).toFixed(3)}%, sieć ${fm.base_fee_lamports}+${fm.priority_fee_lamports}+${fm.jito_tip_lamports} lamportów/tx.
+    Pełny cykl kup+sprzedaj kosztuje ≈ <b>${s.round_trip_cost_pct.toFixed(3)}%</b> – mniejsze ruchy cen nie dają zysku.</p>`;
+
+  const p=s.params;
+  $('strategy').innerHTML=`<p><b>${s.strategy}</b></p><table>${Object.entries(p).map(([a,b])=>`<tr><td class="l">${a}</td><td>${b}</td></tr>`).join('')}</table>
+    ${s.in_position?`<p>TP: ${usd(s.take_profit_price,3)} · SL: ${usd(s.stop_loss_price,3)}</p>`:''}
+    <p class="mute">Ostatnia nauka: ${s.last_learn?tfmt(s.last_learn):'–'} · sprawdzanie ceny co ${s.interval}s</p>`;
+
+  const buys=s.trades.filter(t=>t.side==='BUY').map(t=>({x:t.ts,y:t.ref_price}));
+  const sells=s.trades.filter(t=>t.side==='SELL').map(t=>({x:t.ts,y:t.ref_price}));
+  const pr=s.price_curve.map(([x,y])=>({x,y}));
+  const ds=[{label:'SOL/USD',data:pr,color:css('--acc2')},{label:'Kupno',data:buys,marker:'up',color:css('--up')},
+    {label:'Sprzedaż',data:sells,marker:'down',color:css('--down')}];
+  legend($('priceLegend'),ds);drawChart($('price'),ds);
+
+  const eq=s.equity_curve.map(([x,y])=>({x,y}));
+  const p0=s.price_curve.length?s.price_curve[0][1]:null;
+  const bh=p0?s.price_curve.map(([x,y])=>({x,y:s.start_cash*y/p0})):[];
+  const eds=[{label:'Bot (po opłatach)',data:eq,color:css('--acc'),width:2},
+    {label:'Kup i trzymaj',data:bh,color:css('--mute'),dash:[4,4],width:1}];
+  legend($('equityLegend'),eds);drawChart($('equity'),eds);
+
+  $('trades').innerHTML='<tr><th class="l">Czas</th><th>Strona</th><th>Cena</th><th>SOL</th><th>USD</th><th>Opłaty</th><th>Wynik</th><th class="l">Powód</th></tr>'+
+    s.trades.slice().reverse().map(t=>`<tr><td>${tfmt(t.ts)}</td><td class="${t.side==='BUY'?'up':'down'}">${t.side==='BUY'?'KUP':'SPRZ'}</td>
+    <td>${t.exec_price.toFixed(3)}</td><td>${t.sol.toFixed(4)}</td><td>${usd(t.usd)}</td><td>${usd(t.total_fees_usd,3)}</td>
+    <td class="${cls(t.pnl_usd)}">${t.side==='SELL'?usd(t.pnl_usd):''}</td><td class="l">${t.reason}</td></tr>`).join('');
+
+  $('log').innerHTML=s.events.slice().reverse().map(e=>`<div class="${e.kind}"><span class="t">${tfmt(e.ts)}</span>${e.msg}</div>`).join('');
+}
+
+function renderLearn(r){
+  if(!r){$('learn').innerHTML='<p class="mute">Brak raportu – uruchom <code>python -m solbot learn</code></p>';return}
+  $('learn').innerHTML=`<p>Dane: ${tfmt(r.from_ts)} → ${tfmt(r.to_ts)} (${r.bars} świec 1m) · kup i trzymaj: <b class="${cls(r.buy_hold_pct)}">${pct(r.buy_hold_pct)}</b>
+   · koszt cyklu ${r.round_trip_cost_pct.toFixed(3)}% · wynik: ${r.profitable?'<span class="up">znaleziono zyskową konfigurację</span>':'<span class="down">brak zyskownej konfiguracji – bot tylko obserwuje</span>'}</p>
+   <table><tr><th class="l">#</th><th class="l">Strategia</th><th>Trening</th><th>Test</th><th>Transakcje</th><th>Trafność (test)</th><th>Max DD</th><th class="l">Parametry</th></tr>
+   ${r.leaderboard.map((x,i)=>`<tr><td>${i+1}</td><td class="l">${x.strategy}</td><td class="${cls(x.train.return_pct)}">${pct(x.train.return_pct)}</td>
+   <td class="${cls(x.test.return_pct)}">${pct(x.test.return_pct)}</td><td>${x.train.trades}+${x.test.trades}</td><td>${x.test.win_rate.toFixed(0)}%</td>
+   <td>${x.train.max_drawdown_pct.toFixed(2)}%</td><td class="l"><code>${Object.entries(x.params).map(([a,b])=>a+'='+b).join(' ')}</code></td></tr>`).join('')}</table>`;
+}
+
+let lastBt=null;
+function renderBt(r){
+  lastBt=r;
+  if(!r){$('btInfo').innerHTML='Brak – uruchom <code>python -m solbot backtest</code>';return}
+  const m=r.summary;
+  $('btInfo').innerHTML=`<b>${m.strategy}</b> · zwrot <b class="${cls(m.return_pct)}">${pct(m.return_pct)}</b> vs kup i trzymaj <b class="${cls(m.buy_hold_pct)}">${pct(m.buy_hold_pct)}</b>
+    · ${m.trades} cykli, trafność ${m.win_rate.toFixed(0)}% · opłaty ${usd(m.fees_usd)} (model ${m.fee_model}) · max obsunięcie ${m.max_drawdown_pct.toFixed(2)}%`;
+  const pr=r.equity_curve.map(c=>({x:c[0],y:c[2]})),eq=r.equity_curve.map(c=>({x:c[0],y:c[1]}));
+  const p0=pr.length?pr[0].y:1,bh=pr.map(p=>({x:p.x,y:m.start_equity*p.y/p0}));
+  const ds=[{label:'SOL/USD',data:pr,color:css('--acc2'),width:1},
+    {label:'Kupno',data:r.trades.filter(t=>t.side==='BUY').map(t=>({x:t.ts,y:t.ref_price})),marker:'up',color:css('--up')},
+    {label:'Sprzedaż',data:r.trades.filter(t=>t.side==='SELL').map(t=>({x:t.ts,y:t.ref_price})),marker:'down',color:css('--down')}];
+  legend($('btLegend'),ds);drawChart($('btPrice'),ds);
+  const eds=[{label:'Bot (po opłatach)',data:eq,color:css('--acc'),width:2},{label:'Kup i trzymaj',data:bh,color:css('--mute'),dash:[4,4],width:1}];
+  legend($('btEqLegend'),eds);drawChart($('btEquity'),eds);
+}
+window.addEventListener('resize',()=>lastBt&&renderBt(lastBt));
+async function btTick(){try{renderBt(await (await fetch('/api/backtest')).json())}catch(e){}}
+async function tick(){
+  try{render(await (await fetch('/api/state')).json())}catch(e){$('status').textContent='brak połączenia'}
+}
+async function learnTick(){try{renderLearn(await (await fetch('/api/learn')).json())}catch(e){}}
+tick();learnTick();btTick();setInterval(tick,5000);setInterval(()=>{learnTick();btTick()},60000);
+</script>
+</body>
+</html>
